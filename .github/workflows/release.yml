@@ -1,0 +1,79 @@
+name: Release
+
+# Tags and publishes a GitHub release whenever the packaged upstream version
+# in sources.json changes on main. flake.lock-only changes never touch
+# sources.json and therefore never release.
+
+on:
+  push:
+    branches: [main]
+    paths: [sources.json]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: azeron-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: meta
+        run: |
+          version=$(jq -r .version sources.json)
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "date=$(jq -r .releaseDate sources.json)"
+            echo "url=$(jq -r '."x86_64-linux".url' sources.json)"
+            echo "hash=$(jq -r '."x86_64-linux".hash' sources.json)"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Check whether tag exists
+        id: tag
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.meta.outputs.tag }}" >/dev/null; then
+            echo "exists=true" >>"$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.meta.outputs.tag }} already exists, skipping."
+          else
+            echo "exists=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        if: steps.tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat >notes.md <<'EOF'
+          Packages **Azeron Software ${{ steps.meta.outputs.version }}** (upstream release date: ${{ steps.meta.outputs.date }}).
+
+          | | |
+          |---|---|
+          | AppImage | ${{ steps.meta.outputs.url }} |
+          | SRI hash | `${{ steps.meta.outputs.hash }}` |
+
+          ### Pin this release
+
+          ```nix
+          inputs.azeron.url = "github:crazydisi/azeron-flake/${{ steps.meta.outputs.tag }}";
+          ```
+
+          ```sh
+          nix run github:crazydisi/azeron-flake/${{ steps.meta.outputs.tag }}
+          ```
+          EOF
+
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            --target "$GITHUB_SHA" \
+            --title "Azeron Software ${{ steps.meta.outputs.version }}" \
+            --notes-file notes.md

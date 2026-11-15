@@ -1,0 +1,8 @@
+{
+  "version": "2.0.3",
+  "releaseDate": "2026-10-21",
+  "x86_64-linux": {
+    "url": "https://azeron-software-public.s3.us-east-1.amazonaws.com/live/2.0.3/Azeron-Software-v2.0.3.AppImage",
+    "hash": "sha256-18IuL4x7YOqcQYze49oTamzQe6oFsiB0uWmJBd9oZf0="
+  }
+}

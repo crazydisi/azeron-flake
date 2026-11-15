@@ -10,21 +10,19 @@
       systems = [ "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      version = "2.0.0";
-
-      sources = {
-        x86_64-linux = {
-          url = "https://azeron-software-public.s3.us-east-1.amazonaws.com/live/${version}/Azeron+Software-${version}.AppImage";
-          hash = "sha256-2JwBNVNdNEgdlI1pLY7BPlEJA1KPS96TIWmBitrlcvU=";
-        };
-      };
+      # Version, URL and hash live in sources.json so scripts/update.sh
+      # (and the scheduled update workflow) can bump them with jq.
+      sources = nixpkgs.lib.importJSON ./sources.json;
+      inherit (sources) version;
 
       mkAzeron = pkgs:
         pkgs.appimageTools.wrapType2 {
           pname = "azeron-software";
           inherit version;
 
-          src = pkgs.fetchurl sources.${pkgs.stdenv.hostPlatform.system};
+          src = pkgs.fetchurl {
+            inherit (sources.${pkgs.stdenv.hostPlatform.system}) url hash;
+          };
 
           extraInstallCommands = ''
             mkdir -p $out/share/icons/hicolor/256x256/apps
@@ -50,8 +48,8 @@
             longDescription = ''
               Standalone Nix flake that wraps the upstream Azeron Software AppImage
               with appimageTools.wrapType2 and installs an icon plus .desktop entry.
-              The AppImage URL, version, and SRI hash are pinned manually — bump them
-              when azeron.com publishes a new Linux release.
+              The AppImage URL, version, and SRI hash are pinned in sources.json and
+              bumped automatically by a scheduled GitHub workflow.
 
               Note: this packages the GUI configurator only. Flashing firmware over
               USB requires udev rules that grant your user access to the device;

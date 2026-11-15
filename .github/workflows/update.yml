@@ -1,0 +1,114 @@
+name: Update
+
+# Opens auto-merging PRs for:
+#   - new upstream Azeron Software releases (daily check) -> triggers a release
+#   - nixpkgs flake.lock bumps (weekly)                   -> no release
+#
+# Requires a repository secret UPDATE_TOKEN (fine-grained PAT with
+# "Contents: read & write" and "Pull requests: read & write" on this repo).
+# PRs opened with the default GITHUB_TOKEN would not trigger CI, so the
+# required status check would never run and auto-merge would stall.
+
+on:
+  schedule:
+    - cron: "17 5 * * *" # upstream check, daily
+    - cron: "43 4 * * 1" # flake.lock update, Mondays
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to update
+        type: choice
+        options: [upstream, flake-lock, both]
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azeron-update-${{ github.event.schedule || inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  upstream:
+    if: >-
+      github.event.schedule == '17 5 * * *' ||
+      (github.event_name == 'workflow_dispatch' && inputs.target != 'flake-lock')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Check for new upstream release
+        id: update
+        run: scripts/update.sh
+
+      - name: Create pull request
+        id: pr
+        if: steps.update.outputs.updated == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.UPDATE_TOKEN }}
+          branch: update/azeron-software
+          delete-branch: true
+          commit-message: "azeron-software: ${{ steps.update.outputs.old_version }} -> ${{ steps.update.outputs.version }}"
+          title: "azeron-software: ${{ steps.update.outputs.old_version }} -> ${{ steps.update.outputs.version }}"
+          body: |
+            New upstream release of Azeron Software.
+
+            - Version: `${{ steps.update.outputs.old_version }}` -> `${{ steps.update.outputs.version }}`
+            - Download page: https://azeron.com/pages/software
+
+            Merging this tags and publishes `v${{ steps.update.outputs.version }}`.
+          labels: dependencies
+
+      - name: Enable auto-merge
+        if: steps.pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.UPDATE_TOKEN }}
+        run: gh pr merge --auto --squash "${{ steps.pr.outputs.pull-request-number }}"
+
+  flake-lock:
+    if: >-
+      github.event.schedule == '43 4 * * 1' ||
+      (github.event_name == 'workflow_dispatch' && inputs.target != 'upstream')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Update flake.lock
+        run: nix flake update
+
+      - name: Create pull request
+        id: pr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.UPDATE_TOKEN }}
+          branch: update/flake-lock
+          delete-branch: true
+          commit-message: "flake.lock: update nixpkgs"
+          title: "flake.lock: update nixpkgs"
+          body: |
+            Weekly `nix flake update`. Wrapper environment only — the packaged
+            Azeron Software version is unchanged, so no release is published.
+          labels: dependencies
+
+      - name: Enable auto-merge
+        if: steps.pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.UPDATE_TOKEN }}
+        run: gh pr merge --auto --squash "${{ steps.pr.outputs.pull-request-number }}"

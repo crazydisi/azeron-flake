@@ -1,11 +1,13 @@
 # Azeron Software NixOS Flake
 
 [![CI](https://github.com/crazydisi/azeron-flake/actions/workflows/ci.yml/badge.svg)](https://github.com/crazydisi/azeron-flake/actions/workflows/ci.yml)
+[![Update](https://github.com/crazydisi/azeron-flake/actions/workflows/update.yml/badge.svg)](https://github.com/crazydisi/azeron-flake/actions/workflows/update.yml)
+[![Release](https://img.shields.io/github/v/release/crazydisi/azeron-flake)](https://github.com/crazydisi/azeron-flake/releases/latest)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL_3.0-blue.svg)](./LICENSE)
 
 A Nix flake for installing **[Azeron Software](https://azeron.com/pages/software)** — the keypad configurator for Azeron devices (Cyborg, Cyro, Classic, Keyzen) — on NixOS, Home Manager, or any system with Nix.
 
-Upstream ships a single Linux AppImage (officially marked "experimental", tested on Arch / SteamOS) and no `.deb`, `.rpm`, or Flatpak. This flake wraps that AppImage with `appimageTools.wrapType2`, registers a `.desktop` entry plus icon, and pins the binary by SRI hash for `x86_64-linux`. Version and hash are bumped manually — see [Manual hash bump](#manual-hash-bump) below.
+Upstream ships a single Linux AppImage (officially marked "experimental", tested on Arch / SteamOS) and no `.deb`, `.rpm`, or Flatpak. This flake wraps that AppImage with `appimageTools.wrapType2`, registers a `.desktop` entry plus icon, and pins the binary by SRI hash for `x86_64-linux`. New upstream versions are picked up automatically — see [Automatic updates and releases](#automatic-updates-and-releases) below.
 
 ## Features
 
@@ -14,6 +16,7 @@ Upstream ships a single Linux AppImage (officially marked "experimental", tested
 - **Real desktop integration** — 256×256 icon (extracted from the AppImage) and `.desktop` entry land in the correct hicolor paths
 - **Reproducible** — every commit pins a specific AppImage by SHA-256
 - **CI-verified** — every push runs `nix flake check`, `nix fmt --check`, and a real `nix build`
+- **Auto-updated** — a daily job bumps to new upstream releases and publishes a tagged GitHub release
 
 ## Quick start
 
@@ -118,29 +121,41 @@ The wrapped binary is closed-source (`meta.license = unfree`). To avoid forcing 
 - Your host's `nixpkgs.config.allowUnfree` setting is independent — it stays whatever you have it set to.
 - Adding this flake as an input is implicit consent to install the unfree binary.
 
-## Manual hash bump
+## Pinning a release
 
-When azeron.com publishes a new Linux build, refresh the URL/version/hash in [flake.nix](./flake.nix) by hand:
+Every packaged upstream version gets a tag `vX.Y.Z` and a [GitHub release](https://github.com/crazydisi/azeron-flake/releases). Pin one instead of tracking `main`:
 
-1. Visit <https://azeron.com/pages/software> and grab the current download URL — it looks like
-   `https://azeron-software-public.s3.us-east-1.amazonaws.com/live/X.Y.Z/Azeron+Software-X.Y.Z.AppImage`.
-2. Compute the SRI hash:
+```nix
+inputs.azeron.url = "github:crazydisi/azeron-flake/v2.0.3";
+```
 
-   ```sh
-   nix store prefetch-file \
-     "https://azeron-software-public.s3.us-east-1.amazonaws.com/live/X.Y.Z/Azeron+Software-X.Y.Z.AppImage" \
-     --json | jq -r .hash
-   ```
+## Automatic updates and releases
 
-3. Update the matching `version` and `hash` lines in [flake.nix](./flake.nix).
-4. Rebuild and verify:
+| What | Workflow | Schedule | Release? |
+| --- | --- | --- | --- |
+| New Azeron Software version | [update.yml](./.github/workflows/update.yml) → `upstream` | daily | yes, `vX.Y.Z` |
+| nixpkgs bump in `flake.lock` | [update.yml](./.github/workflows/update.yml) → `flake-lock` | weekly (Mon) | no |
 
-   ```sh
-   nix flake check
-   nix build .#packages.x86_64-linux.azeron-software
-   ```
+Both open a PR with auto-merge enabled; it merges once CI is green. When a merge changes [sources.json](./sources.json), [release.yml](./.github/workflows/release.yml) tags the commit and publishes the release.
 
-5. To pull a fresh `nixpkgs`, run `nix flake update` and commit the new `flake.lock`.
+Version detection reads upstream's electron-builder feed (`live/latest.yml`) and falls back to scraping the download page. `live/latest-linux.yml` is unusable — upstream uploaded the AppImage itself under that name.
+
+### One-time repository setup
+
+1. Create a fine-grained PAT scoped to this repo with **Contents: read & write** and **Pull requests: read & write**, and store it as the Actions secret `UPDATE_TOKEN`. (PRs opened with the default `GITHUB_TOKEN` don't trigger CI.)
+2. Settings → General → enable **Allow auto-merge**.
+3. Settings → Branches → protect `main`, require the status check **`check`** (from CI).
+4. Settings → Actions → General → Workflow permissions: **Read and write**.
+
+### Manual bump
+
+```sh
+scripts/update.sh          # latest upstream
+scripts/update.sh 2.0.4    # specific version
+nix build .#packages.x86_64-linux.azeron-software
+```
+
+The script rewrites [sources.json](./sources.json) (version, release date, URL, SRI hash). It tries the known upstream file-name schemes in order, since they have changed before (`Azeron+Software-X.Y.Z.AppImage` → `Azeron-Software-vX.Y.Z.AppImage`).
 
 ## Development
 
@@ -157,11 +172,15 @@ nix run
 ```text
 .
 ├── flake.nix                       # package, overlay, modules, checks, formatter, devShell
+├── sources.json                    # pinned upstream version, URL, SRI hash
+├── scripts/update.sh               # bumps sources.json to the latest upstream release
 ├── azeron.png                      # 256×256 icon (extracted from upstream AppImage)
 ├── LICENSE                         # GPL-3.0 (wrapper code only)
 ├── README.md
 └── .github/workflows/
-    └── ci.yml                      # build + fmt + flake check on every push
+    ├── ci.yml                      # build + fmt + flake check on every push
+    ├── update.yml                  # scheduled upstream + flake.lock update PRs (auto-merge)
+    └── release.yml                 # tag + GitHub release when sources.json changes
 ```
 
 ## License
